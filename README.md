@@ -8,9 +8,9 @@ To use the implementation, you would need to use a virtual environment and insta
 We recommend using Anaconda for this:
 
 ```bash
-    conda create -n <environment_name> python=3.11
-    conda activate <environment_name>
-    pip install -r requeriments.txt
+conda create -n <environment_name> python=3.11
+conda activate <environment_name>
+pip install -r requeriments.txt
 ```
 
 Make sure to use Python 3.11 when creating the virtual environment. This version of Python is required for the project to function correctly.
@@ -18,9 +18,15 @@ Once you've set up the environment, you should be ready to start using the SegSm
 
 ## Train
 
+**TBD**
+
 ## Use
 
+**TBD**
+
 ## Results
+
+**TBD**
 
 ## Contact
 
