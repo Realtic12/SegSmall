@@ -7,13 +7,11 @@ fi
 cd data
 
 # user details
-#echo "Enter your username:"
-#read user
-user="iarroyopo@uoc.edu"
-pass="Antequera.12"
+echo "Enter your username:"
+read user
 
-#echo "Enter your password:"
-#read -s pass
+echo "Enter your password:"
+read -s pass
 
 wget --keep-session-cookies --save-cookies=cookies.txt --post-data 'username='$user'&password='$pass'&submit=Login' https://www.cityscapes-dataset.com/login/
 wget --load-cookies cookies.txt --content-disposition https://www.cityscapes-dataset.com/file-handling/?packageID=1  #gtfine (241MB)
