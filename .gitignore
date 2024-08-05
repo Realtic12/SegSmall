@@ -1,8 +1,10 @@
-#Visual studio code
-.vscode/*
+# Visual Studio Code
+.vscode/
 
-#Dataset
-.dataset/cityscapes/data
+# Dataset
+dataset/cityscapes/data*
 
-#Pycache
+
+
+# Pycache
 **/__pycache__/
