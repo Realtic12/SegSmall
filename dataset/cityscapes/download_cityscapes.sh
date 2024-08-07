@@ -32,8 +32,8 @@ unzip -q -o gtFine_trainvaltest.zip
 unzip -q -o leftImg8bit_trainvaltest.zip
 #unzip -q -o leftImg8bit_sequence_trainvaltest.zip
 
-echo "Removing the zip files, as they have already been unzipped"
+#echo "Removing the zip files, as they have already been unzipped"
 
-rm -rf gtFine_trainvaltest.zip
-rm -rf leftImg8bit_trainvaltest.zip
+#rm -rf gtFine_trainvaltest.zip
+#rm -rf leftImg8bit_trainvaltest.zip
 #rm -rf leftImg8bit_sequence_trainvaltest.zip

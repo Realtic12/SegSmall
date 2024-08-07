@@ -4,7 +4,9 @@
 # Dataset
 dataset/cityscapes/data*
 
-
+# Results
+train/results*
+train/train_data*
 
 # Pycache
 **/__pycache__/

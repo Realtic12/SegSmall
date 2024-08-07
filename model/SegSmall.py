@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.nn.functional as F
 
+torch.autograd.set_detect_anomaly(True)
+
 """
     Reduce the spatial dimensions of the input while increasing the number of channels.
     Combine convolution and max pooling operations. It is used by the decoder"
@@ -81,7 +83,7 @@ class SEBlock(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace = False),
             nn.Linear(channel // reduction, channel, bias=False),
             nn.Sigmoid()
         )
@@ -157,7 +159,7 @@ class UpsamplerBlock(nn.Module):
     Used to gradually increase the resolution back to the original image size.
 """
 class Decoder(nn.Module):
-    def __init__(self, num_classes, scale_factor=0.25):
+    def __init__(self, num_classes, scale_factor = 0.5):
         super().__init__()
 
         self.layers = nn.ModuleList()
@@ -181,7 +183,8 @@ class Decoder(nn.Module):
         output = self.output_conv(output)
 
         # Resize output size to lower resolution
-        return F.interpolate(output, scale_factor=self.scale_factor, mode='bilinear', align_corners=True)
+        return F.interpolate(output, scale_factor = self.scale_factor, mode='bilinear', align_corners = True)
+
 
 class SegSmall(nn.Module):
     def __init__(self, num_classes, encoder=None):
