@@ -12,6 +12,7 @@ torch.autograd.set_detect_anomaly(True)
 class DownsamplerBlock(nn.Module):
     def __init__(self, ninput, noutput):
         super().__init__()
+        #reduces by two the dimension
         self.conv = nn.Conv2d(ninput, noutput-ninput, (3, 3), stride=2, padding=1, bias=True)
         self.pool = nn.MaxPool2d(2, stride=2)
         self.bn = nn.BatchNorm2d(noutput, eps=1e-3)
@@ -181,9 +182,12 @@ class Decoder(nn.Module):
             output = layer(output)
 
         output = self.output_conv(output)
+        #print(f"output Size {output.size()}")
 
         # Resize output size to lower resolution
-        return F.interpolate(output, scale_factor = self.scale_factor, mode='bilinear', align_corners = True)
+        output_resize = F.interpolate(output, scale_factor = self.scale_factor, mode='bilinear', align_corners = True)
+        #print(f"output Size after interpolate {x.size()}")
+        return output_resize
 
 
 class SegSmall(nn.Module):

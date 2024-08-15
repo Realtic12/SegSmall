@@ -27,7 +27,7 @@ chmod +x download_cityscapes.sh && ./download_cityscapes.sh
 
 It will download the "leftImg8bit" for the RGB images and the "gtFine" for the labels. Please note that for training you should use the "_labelTrainIds" and not the "_labelIds", you can download the [cityscapes scripts](https://github.com/mcordts/cityscapesScripts) and use the [conversor](https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/preparation/createTrainIdLabelImgs.py) to generate trainIds from labelIds.
 
-If you want more info about it, there's a file called "*readme*"  in a directory called *"train"*.
+If you want more info about it, you can find it in a file called "*readme*" within a directory called *"train"*.
 
 ## Use
 

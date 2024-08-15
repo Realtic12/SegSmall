@@ -13,10 +13,10 @@ EXTENSIONS = ['.jpg', '.png']
 
 class cityscapes(Dataset):
 
-    def __init__(self, root, co_transform = False, subset = 'train'):
+    def __init__(self, root : str, co_transform = False, subset = 'train'):
         self.images_root = os.path.join(root, 'leftImg8bit/')
         self.labels_root = os.path.join(root, 'gtFine/')
-        size = (256,256)
+        size = (512, 512)  #Transform image from 1024x2048 to 512x1024
         self.transform = True
         
         self.images_root += subset
@@ -29,6 +29,7 @@ class cityscapes(Dataset):
         self.filenamesGt = [os.path.join(dp, f) for dp, dn, fn in os.walk(os.path.expanduser(self.labels_root)) for f in fn if self.is_label(f)]
         self.filenamesGt.sort()
 
+        
         # Define the default transformation pipeline
         self.transform = transforms.Compose([
             Resize(size),
@@ -40,16 +41,16 @@ class cityscapes(Dataset):
             transforms.ToTensor() #Label to tensor
         ])
     
-    def is_label(self, filename):
+    def is_label(self, filename : str):
         return filename.endswith("_labelTrainIds.png")
     
-    def is_image(self, filename):
+    def is_image(self, filename : str):
         return any(filename.endswith(ext) for ext in EXTENSIONS)
     
     def load_image(self, file):
         return Image.open(file)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index : int):
         filename = self.filenames[index]
         filenameGt = self.filenamesGt[index]
 
@@ -63,5 +64,5 @@ class cityscapes(Dataset):
 
         return image, label
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.filenames)
