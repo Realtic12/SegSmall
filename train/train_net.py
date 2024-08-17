@@ -14,6 +14,7 @@ sys.path.append("..")  #In order to use our classes
 
 from model.SegSmall import SegSmall   
 from utils.Utils import Utils, CheckDevice
+from utils.iouEval import iouEval, colors, getColorEntry
 
 class TrainNet():
     def __init__(self, args, device : str) -> None:
@@ -58,6 +59,9 @@ class TrainNet():
                 dir_path = os.path.join(root, name)
                 if not os.listdir(dir_path):  # Check if the directory is empty
                     raise Exception(f"There's one empty directory {dir_path}")
+                
+    def __calculate_accuracy(self):
+        pass
     
     def __calculate_precision(self, outputs : torch.tensor , targets : torch.tensor) -> float:
         """
@@ -102,7 +106,7 @@ class TrainNet():
     def __empty_cuda_memory(self) -> None:
         torch.cuda.empty_cache()
     
-    def get_training_time(self):
+    def get_training_time(self) -> float:
         """
             Return the amount of time needed for the training
         """
@@ -141,6 +145,11 @@ class TrainNet():
         lambda1 = lambda epoch: pow((1 - ((epoch - 1) / self.epochs)), 0.9)
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda1)
 
+        path_text_file = f'results/{self.name_training}/automated_saved.txt'
+        if (not os.path.exists(path_text_file)):    #dont add first line if it exists 
+            with open(path_text_file, "a") as myfile:
+                myfile.write("Epoch\t\tTrain-loss\t\tTest-loss\t\tTrain-Precision\t\tVal-Precision\t\tTest-IoU(%)\t\tlearningRate")
+
         init_epoch = 1
         step_epochs = 1
 
@@ -158,6 +167,11 @@ class TrainNet():
 
             self.net.train()  # Set the model to training mode
             print(f"Start training epoch: {epoch}")
+
+            for param_group in optimizer.param_groups:
+                print("LEARNING RATE: ", param_group['lr'])
+                usedLr = float(param_group['lr'])
+
             self.__empty_cuda_memory()
             
             init_time_sec = time.time()
@@ -205,6 +219,9 @@ class TrainNet():
 
             # Validation step
             print(f"Start validation epoch: {epoch}")
+
+            iouEvalVal = iouEval(self.num_classes)
+
             self.net.eval()
             self.__empty_cuda_memory()
             progress = 0 #reset progress to show the percentage
@@ -213,12 +230,23 @@ class TrainNet():
                 val_precision_epoch = []
                 for batch in loader_val:   
                     inputs, targets = batch
+
                     targets = targets.squeeze(1) #erase the first value as the size is not as expected
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     outputs = self.net(inputs)
+
+                    #print(f"outputs shape: {outputs.shape}")
+                    #print(f"targets shape: {targets.shape}")
+
                     loss = criterion(outputs, targets.long())
+
                     val_loss_epoch.append(loss.item())
                     val_precision_epoch.append(self.__calculate_precision(outputs, targets).item())
+
+                    targets = targets.unsqueeze(1)
+
+                    iouEvalVal.addBatch(outputs.max(1)[1].unsqueeze(1).data, targets.data)
+
                     progress+=self.batch_size
                     self.show_percentatge("Validation", progress, total_images)
 
@@ -226,12 +254,24 @@ class TrainNet():
             avg_val_precision = np.mean(val_precision_epoch)
             val_loss.append(avg_val_loss)
             val_precision.append(avg_val_precision)
+            iouVal, iou_classes = iouEvalVal.getIoU()
+            iouStr = getColorEntry(iouVal)+'{:0.2f}'.format(iouVal*100) + '\033[0m'
+            
             print(f"\nEpoch [{epoch}/{self.epochs}]")
             print(f"Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}")
             print(f"Training Precision: {avg_train_precision:.4f}, Validation Precision: {avg_val_precision:.4f}")
+            print(f"IoU on VAL set: {iouStr} %%")
             print("###############################################")
+
+            #Write results in a text file
+            with open(path_text_file, "a") as myfile:
+                # Write results to the file
+                myfile.write("\n%d\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.8f\t\t|%.4f" % (
+                    epoch, avg_train_loss, avg_val_loss, avg_train_precision, avg_val_precision, (iouVal*100), usedLr
+                ))
             
-            # Save checkpoint and weights
+
+            # Save the best weight for a checkpoint
             is_best = avg_val_loss < self.best_val_loss
             if is_best:
                 self.best_val_loss = avg_val_loss
