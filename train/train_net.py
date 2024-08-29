@@ -12,9 +12,10 @@ from torchsummary import summary
 
 sys.path.append("..")  #In order to use our classes
 
-from model.SegSmall import SegSmall   
+from model.SegSmall import SegSmall
+from model.erfnet import Net
 from utils.Utils import Utils, CheckDevice
-from utils.iouEval import iouEval, colors, getColorEntry
+from utils.Evaluation import iouCalc, PrecisionCalc
 
 class TrainNet():
     def __init__(self, args, device : str) -> None:
@@ -24,13 +25,13 @@ class TrainNet():
         self.num_classes = args.num_classes
         self.device = device
         self.dataset_path = args.dataset_path
-        self.save_dir = "./train_data"
+        self.name_training = args.train_name
+        self.save_dir = f'./results/{self.name_training}'
         self.batch_size = args.batch_size
         self.weight = torch.ones(self.num_classes)
         self.learning_rate = args.learning_rate
         self.is_resume_train = args.resume_train
         self.best_val_loss = 1 #dummy value to save the weights of the network
-        self.name_training = args.train_name
         self.time_train_sec = [] #Array to store training time by epoch
         self.utils = Utils(args.epochs, self.name_training)
 
@@ -48,7 +49,7 @@ class TrainNet():
 
     #Private method
     def __transform_images_randomly(self):
-        dataset_train = cityscapes(self.dataset_path,  subset = 'train')
+        dataset_train = cityscapes(self.dataset_path, subset = 'train')
         dataset_val = cityscapes(self.dataset_path, subset = 'val')
         return dataset_train, dataset_val
 
@@ -59,21 +60,6 @@ class TrainNet():
                 dir_path = os.path.join(root, name)
                 if not os.listdir(dir_path):  # Check if the directory is empty
                     raise Exception(f"There's one empty directory {dir_path}")
-                
-    def __calculate_accuracy(self):
-        pass
-    
-    def __calculate_precision(self, outputs : torch.tensor , targets : torch.tensor) -> float:
-        """
-            
-            Accuracy = (true positives / true positives + false positives)
-
-            Returns the precision score
-        """
-        _, predicted = torch.max(outputs, 1)
-        true_positive = ((predicted == targets) & (targets != 0)).float().sum()
-        predicted_positive = (predicted != 0).float().sum()
-        return true_positive / (predicted_positive + 1e-8)  # Adding small epsilon to avoid division by zero
     
     
     def resume_training(self, optimizer, checkpoint_file : str) -> None:
@@ -99,9 +85,16 @@ class TrainNet():
             'optimizer': optimizer.state_dict(),
             'best_val_loss': val_loss
         }
-        torch.save(checkpoint, os.path.join(self.save_dir, 'checkpoint.pth.tar'))
+        torch.save(checkpoint, os.path.join(self.save_dir, f'{self.name_training}_checkpoint.pth.tar'))
         if is_best:
-            torch.save(self.net.state_dict(), os.path.join(self.save_dir, 'best_weights.pth'))
+            print(f"Saving model as best with validation loss {val_loss:.4f} %")
+            torch.save(self.net.state_dict(), os.path.join(self.save_dir, f'{self.name_training}_best_weights.pth'))
+    
+    """
+        It is used to count the amount of learnable parameters in the model
+    """
+    def count_param_model(self) -> int:
+        return sum(p.numel() for p in self.net.parameters() if p.requires_grad)
     
     def __empty_cuda_memory(self) -> None:
         torch.cuda.empty_cache()
@@ -145,7 +138,7 @@ class TrainNet():
         lambda1 = lambda epoch: pow((1 - ((epoch - 1) / self.epochs)), 0.9)
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda1)
 
-        path_text_file = f'results/{self.name_training}/automated_saved.txt'
+        path_text_file = f'results/{self.name_training}/results_{self.name_training}.txt'
         if (not os.path.exists(path_text_file)):    #dont add first line if it exists 
             with open(path_text_file, "a") as myfile:
                 myfile.write("Epoch\t\tTrain-loss\t\tTest-loss\t\tTrain-Precision\t\tVal-Precision\t\tTest-IoU(%)\t\tlearningRate")
@@ -157,12 +150,19 @@ class TrainNet():
         train_precision = []
         val_precision = []
 
+        #Array to store the amount of iou
+        iou_val_list = []
+        best_epoch = 0
+
         #Values to store loss in training and validation
         train_loss = []
         val_loss = []
-        total_images = len(loader_train.dataset)
+        total_images_train = len(loader_train.dataset)
+        total_images_val = len(loader_val.dataset)
 
-        print(f"Start training using: {self.epochs} epochs, {self.batch_size} batch size!!!!!")
+        precision_calc = PrecisionCalc()
+
+        print(f"Start training using: {self.epochs} epochs, {self.batch_size} batch size, Dataset train {total_images_train} images, Dataset val {total_images_val}!!!!!")
         for epoch in range(init_epoch, self.epochs + 1, step_epochs):
 
             self.net.train()  # Set the model to training mode
@@ -194,17 +194,20 @@ class TrainNet():
                 outputs = self.net(inputs)
 
                 loss = criterion(outputs, targets.long())
+                optimizer.zero_grad() #grad to zero
+
+                #Backpropragate to compute gradients
                 loss.backward()
 
+                #Update model parameters
                 optimizer.step() 
-                optimizer.zero_grad()
 
                 epoch_loss_train.append(loss.item())
-                epoch_precision_train.append(self.__calculate_precision(outputs, targets).item())
+                epoch_precision_train.append(precision_calc(outputs, targets))
 
                 # Make sure not to exceed 100% if the last batch has fewer images
                 progress+=self.batch_size
-                self.show_percentatge("Training", progress, total_images)
+                self.show_percentatge("Training", progress, total_images_train)
 
             avg_train_loss = np.mean(epoch_loss_train)
             avg_train_precision = np.mean(epoch_precision_train)
@@ -220,7 +223,7 @@ class TrainNet():
             # Validation step
             print(f"Start validation epoch: {epoch}")
 
-            iouEvalVal = iouEval(self.num_classes)
+            iouEvalClass = iouCalc(self.device, self.num_classes)
 
             self.net.eval()
             self.__empty_cuda_memory()
@@ -238,36 +241,41 @@ class TrainNet():
                     #print(f"outputs shape: {outputs.shape}")
                     #print(f"targets shape: {targets.shape}")
 
+                    #Compute loss
                     loss = criterion(outputs, targets.long())
-
                     val_loss_epoch.append(loss.item())
-                    val_precision_epoch.append(self.__calculate_precision(outputs, targets).item())
+
+                    #Compute precision
+                    val_precision_epoch.append(precision_calc(outputs, targets))
 
                     targets = targets.unsqueeze(1)
 
-                    iouEvalVal.addBatch(outputs.max(1)[1].unsqueeze(1).data, targets.data)
+                    #Compute IoU
+                    iouEvalClass.addBatch(outputs, targets)
 
                     progress+=self.batch_size
-                    self.show_percentatge("Validation", progress, total_images)
+                    self.show_percentatge("Validation", progress, total_images_val)
 
+            # Calculate average metrics for the entire epoch
             avg_val_loss = np.mean(val_loss_epoch)
             avg_val_precision = np.mean(val_precision_epoch)
+            avg_iou, iou_per_class = iouEvalClass.getIoU()
+            #print(f'IoU per class {iou_per_class}')
+
             val_loss.append(avg_val_loss)
             val_precision.append(avg_val_precision)
-            iouVal, iou_classes = iouEvalVal.getIoU()
-            iouStr = getColorEntry(iouVal)+'{:0.2f}'.format(iouVal*100) + '\033[0m'
+            iou_val_list.append(np.mean(avg_iou))
             
             print(f"\nEpoch [{epoch}/{self.epochs}]")
-            print(f"Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}")
-            print(f"Training Precision: {avg_train_precision:.4f}, Validation Precision: {avg_val_precision:.4f}")
-            print(f"IoU on VAL set: {iouStr} %%")
-            print("###############################################")
+            print(f"Average Epoch Training Loss: {avg_train_loss:.4f}, Average Epoch Validation Loss: {avg_val_loss:.4f}")
+            print(f"Average Training Precision: {avg_train_precision:.4f}, Average Validation Precision: {avg_val_precision:.4f}")
+            print(f"IoU on VAL set: {avg_iou*100:.4f} %%")
 
             #Write results in a text file
             with open(path_text_file, "a") as myfile:
                 # Write results to the file
                 myfile.write("\n%d\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.8f\t\t|%.4f" % (
-                    epoch, avg_train_loss, avg_val_loss, avg_train_precision, avg_val_precision, (iouVal*100), usedLr
+                    epoch, avg_train_loss, avg_val_loss, avg_train_precision, avg_val_precision, (avg_iou*100), usedLr
                 ))
             
 
@@ -275,13 +283,17 @@ class TrainNet():
             is_best = avg_val_loss < self.best_val_loss
             if is_best:
                 self.best_val_loss = avg_val_loss
+            #save every epoch
             self.save_checkpoint(epoch, optimizer, avg_val_loss, is_best)
 
-            scheduler.step()
+            print("###############################################")
+            scheduler.step() #Update learning rate
 
         #Create the plots for evaluating the network
+        print(f"Best epoch {best_epoch} with Loss: {self.best_val_loss:.4f} %")
         self.utils.create_val_loss_plot(train_loss, val_loss)
         self.utils.create_precision_plot(train_precision, val_precision)
+        self.utils.create_iou_plot(iou_val_list)
 
 
 def main():
@@ -297,13 +309,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_path",  type = str,   default = default_path_dataset, help="Dataset to train")
     parser.add_argument("--batch_size",    type = int,   default = 5,                    help = "Batch size") #after everything works, change it to 12, Warning with CUDA running out of memory
-    parser.add_argument("--epochs",        type = int,   default = 15,                   help="Number of epochs to train")
-    parser.add_argument("--num-classes",   type = int,   default = 30,                   help='SegSmall classes. Required for loading the base network')
+    parser.add_argument("--epochs",        type = int,   default = 15,                   help= "Number of epochs to train")
+    parser.add_argument("--num-classes",   type = int,   default = 20,                   help= "SegSmall classes. Required for loading the base network. Classes that are only evaluated in eval mode")
     #parser.add_argument("--in_channels",   type = int,   default = 3,                   help = "Number of input channels for the network")
     #parser.add_argument("--out_channels",  type = int,   default = 64,                  help = "Number of output channels for the network")
-    parser.add_argument("--kernel_size",   type = int,   default = 3,                    help = "Size of the convolutional kernel, shoudl be cuadratic")
-    parser.add_argument("--stride",        type = int,   default = 3,                    help = "Strides (cuadratic)")
-    parser.add_argument("--learning_rate", type = float, default = 0.001,                help = "Learning rate for the training")
+    parser.add_argument("--learning_rate", type = float, default = 5e-4,                 help = "Learning rate for the training")
     parser.add_argument("--resume_train",  type = bool,  default = False,                help = "Resume training from a checkpoint")
     parser.add_argument("--train_name",    type = str,   required = True,                help = "Training name to differentiate among them")
     args = parser.parse_args()
@@ -315,11 +325,12 @@ def main():
 
     try: 
         train_net = TrainNet(args, check_device())
-        train_net.train_and_validation()
+        print(f"Model parameters: {train_net.count_param_model()}")
+        #train_net.train_and_validation()
         print(f"Training time {train_net.get_training_time():.2f} seconds")
         print("------------------------")
         print("Train finished!!!")
-        
+
     except Exception as e:
         print(e)
 
