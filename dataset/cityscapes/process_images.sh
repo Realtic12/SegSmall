@@ -1,6 +1,8 @@
 #!/bin/bash
 if [ ! -d "cityscapesScripts" ]; then
     git clone https://github.com/mcordts/cityscapesScripts.git
+    echo "Repo cloned"
+else
     echo "Repo already cloned"
 fi
 

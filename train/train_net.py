@@ -4,7 +4,6 @@ import argparse
 import os
 import sys
 import time
-from dataset import cityscapes
 from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam, lr_scheduler
@@ -14,8 +13,9 @@ sys.path.append("..")  #In order to use our classes
 
 from model.SegSmall import SegSmall
 from model.erfnet import Net
-from utils.Utils import Utils, CheckDevice
+from utils.Utils import Utils, CheckDevice, Weights
 from utils.Evaluation import iouCalc, PrecisionCalc
+from utils.Dataset import cityscapes, MyCoTransform
 
 class TrainNet():
     def __init__(self, args, device : str) -> None:
@@ -28,12 +28,14 @@ class TrainNet():
         self.name_training = args.train_name
         self.save_dir = f'./results/{self.name_training}'
         self.batch_size = args.batch_size
-        self.weight = torch.ones(self.num_classes)
+        self.model = args.model
+        self.scheduler = args.scheduler
         self.learning_rate = args.learning_rate
         self.is_resume_train = args.resume_train
-        self.best_val_loss = 1 #dummy value to save the weights of the network
+        self.best_iou = 0
         self.time_train_sec = [] #Array to store training time by epoch
         self.utils = Utils(args.epochs, self.name_training)
+        self.utils_weights = Weights(self.device)
 
         torch.autograd.set_detect_anomaly(True)  #Detailer of error messages
 
@@ -42,18 +44,29 @@ class TrainNet():
             os.makedirs("train_data")
 
         self.__check_empty_directories(args.dataset_path)
-        self.net = SegSmall(args.num_classes).to(self.device) #placed the job on the available device, preferibably in gpu
+        if(self.model == "SegSmall"):
+            print("Using SegSmall model")
+            self.net = SegSmall(args.num_classes).to(self.device) #placed the job on the available device, preferibably in gpu
+        elif(self.model == "erfnet"):
+            print("Using erfnet model")
+            self.net = Net(args.num_classes).to(self.device) #placed the job on the available device, preferibably in gpu
+        else:
+            raise Exception("Model not found")
 
         #Interesting to show info about the model 
         #summary(self.net, input_size=(3, 512, 512), batch_size=self.batch_size)
 
-    #Private method
+    """
+        Transform images randomly
+    """
     def __transform_images_randomly(self):
-        dataset_train = cityscapes(self.dataset_path, subset = 'train')
-        dataset_val = cityscapes(self.dataset_path, subset = 'val')
+        co_transform = MyCoTransform(augment=True)
+        co_transform_val = MyCoTransform(augment=False)
+        dataset_train = cityscapes(self.dataset_path, co_transform = co_transform, subset = 'train')
+        dataset_val = cityscapes(self.dataset_path, co_transform = co_transform_val, subset = 'val')
         return dataset_train, dataset_val
 
-    #Private method
+    """ Check if there's any empty directory """
     def __check_empty_directories(self, dataset_path : str) -> None:
         for root, dirs, files in os.walk(dataset_path):
             for name in dirs:
@@ -61,8 +74,10 @@ class TrainNet():
                 if not os.listdir(dir_path):  # Check if the directory is empty
                     raise Exception(f"There's one empty directory {dir_path}")
     
-    
-    def resume_training(self, optimizer, checkpoint_file : str) -> None:
+    """
+        Resume training from a checkpoint
+    """
+    def resume_training(self, optimizer, checkpoint_file : str) -> int:
         filenameCheckpoint = self.save_dir + '/' + checkpoint_file
         
         #Check if the file exists, although the user wants to reignite the training
@@ -71,23 +86,26 @@ class TrainNet():
         
         filenameCheckpoint = self.save_dir + checkpoint_file
         checkpoint = torch.load(filenameCheckpoint)
-        start_epoch = checkpoint['epoch']
         self.net.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-        best_acc = checkpoint['best_acc']
+        self.best_iou = checkpoint['best_val_iou']
+        epoch = checkpoint['epoch']
         print("=> Loaded checkpoint at epoch {})".format(checkpoint['epoch']))
+        return epoch
 
-    
-    def save_checkpoint(self, epoch : int, optimizer, val_loss : float, is_best=False) -> None:
+    """
+        Save the checkpoint
+    """
+    def save_checkpoint(self, epoch : int, optimizer, iou : float, is_best = False) -> None:
         checkpoint = {
             'epoch': epoch,
             'state_dict': self.net.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'best_val_loss': val_loss
+            'best_val_iou': iou
         }
         torch.save(checkpoint, os.path.join(self.save_dir, f'{self.name_training}_checkpoint.pth.tar'))
         if is_best:
-            print(f"Saving model as best with validation loss {val_loss:.4f} %")
+            print(f"Saving model as best with {iou:.4f} %")
             torch.save(self.net.state_dict(), os.path.join(self.save_dir, f'{self.name_training}_best_weights.pth'))
     
     """
@@ -114,10 +132,16 @@ class TrainNet():
             train_sec = train_sec + self.time_train_sec[i]
         return train_sec
     
+    """
+        Show the percentage of the training or validation
+    """
     def show_percentatge(self, type : str , progress : int, total_images : int) -> None:
         percentage = min(progress * 100 / total_images, 100)
         print(f"\r{type} Progress: {percentage:.0f}%", end='', flush=True)
-        
+
+    """
+        Train and validate the network
+    """    
     def train_and_validation(self) -> None:
         """
             Interesting: https://stackoverflow.com/questions/51433378/what-does-model-train-do-in-pytorch
@@ -126,21 +150,43 @@ class TrainNet():
         loader_train = DataLoader(data_train, num_workers = 4, batch_size = self.batch_size, shuffle = True)
         loader_val = DataLoader(data_val, num_workers = 4, batch_size = self.batch_size, shuffle = False)
         
-        self.weight = self.weight.to(self.device)
-        criterion = CrossEntropyLoss(weight = self.weight)
+        path_weights = f'{os.getcwd()}/class_weights.json'
+        self.weights = self.utils_weights.calculate_class_weights(data_train, self.num_classes, path_weights)
+        self.weights = self.weights.to(self.device)
+        criterion = CrossEntropyLoss(weight = self.weights, ignore_index=255)
 
         optimizer = Adam(self.net.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4)
 
         checkpoint_file = f'checkpoint_{self.name_training}.pth.tar'
         if self.is_resume_train:
-            self.resume_training(optimizer, checkpoint_file)
+            init_epoch = self.resume_training(optimizer, checkpoint_file)
 
-        lambda1 = lambda epoch: pow((1 - ((epoch - 1) / self.epochs)), 0.9)
-        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda1)
+        if(self.scheduler == "Lambda"):
+            lambda1 = lambda epoch: pow((1 - ((epoch - 1) / self.epochs)), 0.9)
+            scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda1)
+        elif(self.scheduler == "Reduce"):
+            scheduler = lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode = 'max',          # Mode can be 'min' for minimizing loss, or 'max' for maximizing metrics like accuracy
+                factor = 0.5,          # Factor by which the learning rate will be reduced. New_lr = lr * factor
+                patience = 2,          # Number of epochs with no improvement after which learning rate will be reduced
+                verbose = True,        # Print messages when the learning rate is updated
+                min_lr = 5e-4          # Minimum learning rate
+            )
+        else:
+            raise Exception("Scheduler not found")
 
         path_text_file = f'results/{self.name_training}/results_{self.name_training}.txt'
+        if(self.model == "SegSmall"):
+            path_text_file = f'results/{self.name_training}/results_{self.name_training}_SegSmall.txt'
+        elif(self.model == "erfnet"):
+            path_text_file = f'results/{self.name_training}/results_{self.name_training}_erfnet.txt'
+        else:
+            raise Exception("Model not found")
+        
         if (not os.path.exists(path_text_file)):    #dont add first line if it exists 
             with open(path_text_file, "a") as myfile:
+                myfile.write(f'Using {self.model} model with {self.scheduler} scheduler. Batch size: {self.batch_size} and epochs: {self.epochs} \n')
                 myfile.write("Epoch\t\tTrain-loss\t\tTest-loss\t\tTrain-Precision\t\tVal-Precision\t\tTest-IoU(%)\t\tlearningRate")
 
         init_epoch = 1
@@ -164,7 +210,7 @@ class TrainNet():
 
         print(f"Start training using: {self.epochs} epochs, {self.batch_size} batch size, Dataset train {total_images_train} images, Dataset val {total_images_val}!!!!!")
         for epoch in range(init_epoch, self.epochs + 1, step_epochs):
-
+            
             self.net.train()  # Set the model to training mode
             print(f"Start training epoch: {epoch}")
 
@@ -180,10 +226,6 @@ class TrainNet():
             progress = 0
             for batch in loader_train:
                 inputs, targets = batch
-                targets = targets.squeeze(1) #erase the first value to match the dimensions of the expected output
-
-                #print(f"Inputs size {inputs.size()}")
-                #print(f"Target size {targets.size()}")
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
 
                 # - Input [batch_size, channels, heigh, weight]
@@ -192,8 +234,8 @@ class TrainNet():
                 assert inputs.size(3) == targets.size(2), "Input and target width mismatch"
                 
                 outputs = self.net(inputs)
-
-                loss = criterion(outputs, targets.long())
+                
+                loss = criterion(outputs, targets.squeeze(1).long())
                 optimizer.zero_grad() #grad to zero
 
                 #Backpropragate to compute gradients
@@ -219,11 +261,11 @@ class TrainNet():
             print(f"\nTime Train epoch: {time_train_epoch_sec:.2f} s")
             init_time_sec = time_train_epoch_sec #Now the iniial time is the end of the last epoch
             self.time_train_sec.append(time_train_epoch_sec)  #Save it for further evaluation
-
+            
             # Validation step
             print(f"Start validation epoch: {epoch}")
 
-            iouEvalClass = iouCalc(self.device, self.num_classes)
+            iouEval = iouCalc()
 
             self.net.eval()
             self.__empty_cuda_memory()
@@ -231,10 +273,11 @@ class TrainNet():
             with torch.no_grad():
                 val_loss_epoch = []
                 val_precision_epoch = []
+                val_iou_epoch = []
+                val_mean_iou_epoch = []
                 for batch in loader_val:   
                     inputs, targets = batch
 
-                    targets = targets.squeeze(1) #erase the first value as the size is not as expected
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     outputs = self.net(inputs)
 
@@ -242,16 +285,16 @@ class TrainNet():
                     #print(f"targets shape: {targets.shape}")
 
                     #Compute loss
-                    loss = criterion(outputs, targets.long())
+                    loss = criterion(outputs.squeeze(1), targets.squeeze(1).long())
                     val_loss_epoch.append(loss.item())
 
                     #Compute precision
                     val_precision_epoch.append(precision_calc(outputs, targets))
 
-                    targets = targets.unsqueeze(1)
-
                     #Compute IoU
-                    iouEvalClass.addBatch(outputs, targets)
+                    iou_per_class, mean_iou = iouEval.calculate_batch_iou(outputs, targets, self.num_classes)
+                    val_iou_epoch.append(iou_per_class)
+                    val_mean_iou_epoch.append(mean_iou)
 
                     progress+=self.batch_size
                     self.show_percentatge("Validation", progress, total_images_val)
@@ -259,38 +302,42 @@ class TrainNet():
             # Calculate average metrics for the entire epoch
             avg_val_loss = np.mean(val_loss_epoch)
             avg_val_precision = np.mean(val_precision_epoch)
-            avg_iou, iou_per_class = iouEvalClass.getIoU()
-            #print(f'IoU per class {iou_per_class}')
+            avg_val_iou = torch.stack(val_iou_epoch).mean(dim=0)
+            avg_val_mean_iou = np.mean(val_mean_iou_epoch)
 
             val_loss.append(avg_val_loss)
             val_precision.append(avg_val_precision)
-            iou_val_list.append(np.mean(avg_iou))
+            iou_val_list.append(avg_val_mean_iou)
             
             print(f"\nEpoch [{epoch}/{self.epochs}]")
             print(f"Average Epoch Training Loss: {avg_train_loss:.4f}, Average Epoch Validation Loss: {avg_val_loss:.4f}")
             print(f"Average Training Precision: {avg_train_precision:.4f}, Average Validation Precision: {avg_val_precision:.4f}")
-            print(f"IoU on VAL set: {avg_iou*100:.4f} %%")
+            print(f"Validation IoU per class: {avg_val_iou}")
+            print(f"Validation Mean IoU: {avg_val_mean_iou:.4f}")
 
             #Write results in a text file
             with open(path_text_file, "a") as myfile:
                 # Write results to the file
-                myfile.write("\n%d\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.8f\t\t|%.4f" % (
-                    epoch, avg_train_loss, avg_val_loss, avg_train_precision, avg_val_precision, (avg_iou*100), usedLr
+                myfile.write("\n%d\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f" % (
+                    epoch, avg_train_loss, avg_val_loss, avg_train_precision, avg_val_precision, avg_val_mean_iou, usedLr
                 ))
             
-
             # Save the best weight for a checkpoint
-            is_best = avg_val_loss < self.best_val_loss
+            is_best = avg_val_mean_iou > self.best_iou
             if is_best:
-                self.best_val_loss = avg_val_loss
+                self.best_iou = avg_val_mean_iou
+                best_epoch = epoch
             #save every epoch
-            self.save_checkpoint(epoch, optimizer, avg_val_loss, is_best)
+            self.save_checkpoint(epoch, optimizer, avg_val_mean_iou, is_best)
 
+            if(self.scheduler == "Reduce"):
+                scheduler.step(self.best_iou) #Update learning rate according to IoU if becomes stagnant
+            else:
+                scheduler.step() #Update learning rate regardless any condition
             print("###############################################")
-            scheduler.step() #Update learning rate
-
+            
         #Create the plots for evaluating the network
-        print(f"Best epoch {best_epoch} with Loss: {self.best_val_loss:.4f} %")
+        print(f"Best epoch {best_epoch} with IOU: {self.best_iou:.4f} %")
         self.utils.create_val_loss_plot(train_loss, val_loss)
         self.utils.create_precision_plot(train_precision, val_precision)
         self.utils.create_iou_plot(iou_val_list)
@@ -307,15 +354,15 @@ def main():
 
     #Parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path",  type = str,   default = default_path_dataset, help="Dataset to train")
-    parser.add_argument("--batch_size",    type = int,   default = 5,                    help = "Batch size") #after everything works, change it to 12, Warning with CUDA running out of memory
-    parser.add_argument("--epochs",        type = int,   default = 15,                   help= "Number of epochs to train")
-    parser.add_argument("--num-classes",   type = int,   default = 20,                   help= "SegSmall classes. Required for loading the base network. Classes that are only evaluated in eval mode")
-    #parser.add_argument("--in_channels",   type = int,   default = 3,                   help = "Number of input channels for the network")
-    #parser.add_argument("--out_channels",  type = int,   default = 64,                  help = "Number of output channels for the network")
-    parser.add_argument("--learning_rate", type = float, default = 5e-4,                 help = "Learning rate for the training")
+    parser.add_argument("--dataset_path",  type = str,   default = default_path_dataset, help = "Dataset to train")
+    parser.add_argument("--batch_size",    type = int,   default = 5,                    help = "Batch size") 
+    parser.add_argument("--epochs",        type = int,   default = 15,                   help = "Number of epochs to train")
+    parser.add_argument("--num-classes",   type = int,   default = 19,                   help = "SegSmall classes. Required for loading the base network. Classes that are only evaluated in eval mode")
+    parser.add_argument("--learning_rate", type = float, default = 0.005,                help = "Learning rate for the training")
     parser.add_argument("--resume_train",  type = bool,  default = False,                help = "Resume training from a checkpoint")
     parser.add_argument("--train_name",    type = str,   required = True,                help = "Training name to differentiate among them")
+    parser.add_argument("--model",         type = str,   required = True,                help = "Model to use")
+    parser.add_argument("--scheduler",     type = str,   required = True,                help = "Scheduler to use")
     args = parser.parse_args()
 
     check_device = CheckDevice() #Obtain the available device to use
@@ -326,7 +373,7 @@ def main():
     try: 
         train_net = TrainNet(args, check_device())
         print(f"Model parameters: {train_net.count_param_model()}")
-        #train_net.train_and_validation()
+        train_net.train_and_validation()
         print(f"Training time {train_net.get_training_time():.2f} seconds")
         print("------------------------")
         print("Train finished!!!")

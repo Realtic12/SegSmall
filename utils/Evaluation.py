@@ -1,91 +1,49 @@
 import torch
+import numpy as np
 
 class iouCalc:
-    def __init__(self, device : str, nClasses : int, ignoreIndex = 20):
-        self.nClasses = nClasses
-        self.ignoreIndex = ignoreIndex if nClasses > ignoreIndex else -1  # No ignoreIndex if it's out of range
-        self.device = device
-        self.reset()
+    """
+        Calculate IoU for a batch of predictions and targets.
+    """
+    def calculate_batch_iou(self, predictions : torch.tensor , targets : torch.tensor, num_classes : int, smooth=1e-6) -> torch.tensor:
+        # Move tensors to CPU for numpy operations
+        predictions = predictions.detach().cpu().numpy()  #numpy only on cpu tensors
+        targets = targets.detach().cpu().numpy()
+        
+        # Convert predictions to class indices
+        predictions = np.argmax(predictions, axis=1)
+        
+        intersection = np.zeros(num_classes)
+        union = np.zeros(num_classes)
+        
+        for class_id in range(num_classes):
+            # Create masks for predictions and targets for the current class
+            pred_mask = (predictions == class_id)
+            target_mask = (targets == class_id)
 
-    def reset(self):
-        num_classes = self.nClasses if self.ignoreIndex == -1 else self.nClasses - 1
-        self.tp = torch.zeros(num_classes).double()
-        self.fp = torch.zeros(num_classes).double()
-        self.fn = torch.zeros(num_classes).double()
+            # Compute intersection and union for the current class
+            intersection[class_id] += np.sum(np.logical_and(pred_mask, target_mask))
+            union[class_id] += np.sum(np.logical_or(pred_mask, target_mask))
+        
+        iou_classes = (intersection + smooth) / (union + smooth)
 
-    def addBatch(self, x, y):
-        # Ensure x and y are on the same device
-        y = y.to(self.device)
-        x = x.to(self.device)
-
-        # Convert predictions to one-hot encoding if needed
-        if x.size(1) == 1:
-            x_onehot = torch.zeros(x.size(0), self.nClasses, x.size(2), x.size(3), device = self.device)
-            x_onehot.scatter_(1, x.long(), 1).float()
-        else:
-            x_onehot = x.float()
-
-        if y.size(1) == 1:
-            y_onehot = torch.zeros(y.size(0), self.nClasses, y.size(2), y.size(3), device = self.device)
-            y_onehot.scatter_(1, y.long(), 1).float()
-        else:
-            y_onehot = y.float()
-
-        # Handle ignoreIndex
-        if self.ignoreIndex != -1:
-            ignores = y_onehot[:, self.ignoreIndex].unsqueeze(1)
-            x_onehot = x_onehot[:, :self.ignoreIndex]
-            y_onehot = y_onehot[:, :self.ignoreIndex]
-        else:
-            ignores = torch.zeros_like(y_onehot[:, 0:1])
-
-        # Calculate TP, FP, FN
-        tpmult = x_onehot * y_onehot
-        tp = tpmult.sum(dim=[0, 2, 3])
-        fpmult = x_onehot * (1 - y_onehot - ignores)
-        fp = fpmult.sum(dim=[0, 2, 3])
-        fnmult = (1 - x_onehot) * y_onehot
-        fn = fnmult.sum(dim=[0, 2, 3])
-
-        # Accumulate
-        self.tp += tp.double().cpu()
-        self.fp += fp.double().cpu()
-        self.fn += fn.double().cpu()
-
-    def getIoU(self):
-        """
-        Compute the Intersection over Union (IoU) for each class and the mean IoU.
-
-        Returns:
-            - mean_iou: Average IoU across all classes (float).
-            - iou_per_class: IoU for each class (tensor).
-        """
-
-        num = self.tp
-        den = self.tp + self.fp + self.fn + 1e-15
-        iou = num / den
-        iou = torch.clamp(iou, min=0.0, max=1.0) #Ensure values between 0 and 1
-        return iou.mean().item(), iou
-    
-class AccuracyCalc:
-    def __call__(self, outputs, targets) -> float:
-        _, predicted = outputs.max(1)
-        total = (outputs == targets).float().sum().item()
-        acc = 100 * total / targets.size(0)
-        #return correct/total
+        # Convert to percentages
+        iou_classes_percentage = iou_classes * 100
+        mean_iou_percentatge = np.mean(iou_classes_percentage)
+        
+        return torch.from_numpy(iou_classes_percentage), mean_iou_percentatge
 
 class PrecisionCalc:
+    """
+        Calculate the precision score for classification.
 
+        Parameters:
+        - outputs: Model's output tensor (logits or probabilities).
+        - targets: Ground truth labels (tensor).
+
+        Returns the average precision score across the batch, between 0 an 1"""
     def __call__(self, outputs : torch.tensor , targets : torch.tensor) -> float:
-        """
-            Calculate the precision score for classification.
-
-            Parameters:
-            - outputs: Model's output tensor (logits or probabilities).
-            - targets: Ground truth labels (tensor).
-
-            Returns the average precision score across the batch, between 0 an 1
-        """
+       
         #print(f'Batch size {targets.size(0)}')
         #print(f'Num classes {outputs.size(1)}')
         batch_size = targets.size(0)

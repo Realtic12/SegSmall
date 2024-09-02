@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.init as init
 import torch.nn.functional as F
 
 """
@@ -48,10 +47,11 @@ class SEBlock(nn.Module):
         Reduces the number of parameters and computations compared to standard convolutions
 """
 class DepthwiseSeparableConv(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
+    def __init__(self, in_channels, out_channels, stride=1, dilation = 1):
         super().__init__()
 
-        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=stride, padding=1, groups=in_channels, bias=False)
+        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=stride, 
+                                   padding=dilation, dilation=dilation, groups=in_channels, bias=False)
         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
         self.bn = nn.BatchNorm2d(out_channels, eps=1e-03)
         
@@ -63,18 +63,16 @@ class DepthwiseSeparableConv(nn.Module):
     
 
 class non_bottleneck_1d (nn.Module):
-    def __init__(self, chann, dropprob, dilated):        
+    def __init__(self, chann, dropprob, dilation):        
         super().__init__()
 
-        self.conv3x1_1 = DepthwiseSeparableConv(chann, chann, stride=1)
-
-        self.conv1x3_1 = DepthwiseSeparableConv(chann, chann, stride=1)
+        self.conv3x1_1 = DepthwiseSeparableConv(chann, chann, stride=1, dilation=1)
+        self.conv1x3_1 = DepthwiseSeparableConv(chann, chann, stride=1, dilation=1)
 
         self.bn1 = nn.BatchNorm2d(chann, eps=1e-03)
 
-        self.conv3x1_2 = DepthwiseSeparableConv(chann, chann, stride=1)
-
-        self.conv1x3_2 = DepthwiseSeparableConv(chann, chann, stride=1)
+        self.conv3x1_2 = DepthwiseSeparableConv(chann, chann, stride=1, dilation=dilation)
+        self.conv1x3_2 = DepthwiseSeparableConv(chann, chann, stride=1, dilation=dilation)
 
         self.bn2 = nn.BatchNorm2d(chann, eps=1e-03)
 
@@ -114,7 +112,7 @@ class Encoder(nn.Module):
         self.layers.append(DownsamplerBlock(16,64))
 
         for x in range(0, 5):    #5 times
-           self.layers.append(non_bottleneck_1d(64, 0.03, 1)) 
+           self.layers.append(non_bottleneck_1d(64, 0.03, 2**(x%3))) 
 
         self.layers.append(DownsamplerBlock(64,128))
 
@@ -126,8 +124,9 @@ class Encoder(nn.Module):
 
         self.output_conv = nn.Conv2d(128, num_classes, 1, stride=1, padding=0, bias=True)
 
-        self.se1 = SEBlock(64)  #Important!!!!!!!!!!!!
-        self.se2 = SEBlock(128) #Important!!!!!!!!!!!!
+        #!!!Important: SEBlock is applied after the first set of non-bottleneck blocks and after the last set of non-bottleneck blocks
+        self.se1 = SEBlock(64) 
+        self.se2 = SEBlock(128)
 
 
     def forward(self, input, predict=False):

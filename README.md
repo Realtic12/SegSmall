@@ -10,7 +10,7 @@ We recommend using Anaconda for this:
 ```bash
 conda create -n <environment_name> python=3.11
 conda activate <environment_name>
-pip install -r requeriments.txt
+pip install -r requirements.txt
 ```
 
 Make sure to use Python 3.11 when creating the virtual environment. This version of Python is required for the project to function correctly.
@@ -31,11 +31,9 @@ If you want more info about it, you can find it in a file called "*readme*" with
 
 ## Use
 
-**TBD**
+After each training process, the best weights are saved in a file called according to your training name which ends in ".pth" located inside a folder called results in the train folder.
 
-## Results
-
-**TBD**
+Therefore, if you want to use the model to make predictions, you only need to take that weights.
 
 ## Contact
 
