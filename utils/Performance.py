@@ -1,16 +1,21 @@
 import time
 from typing import Tuple
+import argparse
 
 import torch
 import sys
+
 sys.path.append("..")
 
 from model.SegSmall import SegSmall
 from model.erfnet import Net
 from utils.Utils import CheckDevice
 
+"""
+    Class to evaluate the inference and fps from a model at inference stage
+"""
 class PerformanceEvaluator:
-    def __init__(self, num_classes: int, device: str, input_shape: Tuple[int, int, int, int]) -> None:
+    def __init__(self, num_classes: int, device: str, input_shape: Tuple[int, int, int, int], args) -> None:
         """
         Initialize the PerformanceEvaluator.
 
@@ -22,7 +27,14 @@ class PerformanceEvaluator:
         self.num_classes = num_classes
         self.input_shape = input_shape
         self.device = device
-        self.model = SegSmall(num_classes=self.num_classes).to(self.device)
+        if(args.model == "SegSmall"):
+            print("SegSmall in use")
+            self.model = SegSmall(num_classes=self.num_classes).to(self.device)
+        elif (args.model == "ERFNet"):
+             print("ERFNet in use")
+             self.model = Net(num_classes=self.num_classes).to(self.device)
+        else:
+            raise Exception ("Model not found")
         self.input_tensor = torch.randn(*self.input_shape).to(self.device)
 
     def __warm_up(self, num_runs: int = 10) -> None:
@@ -90,18 +102,23 @@ class PerformanceEvaluator:
             if 'CUDA' in str(e):
                 print("This might be due to insufficient GPU memory. Try reducing the input size or using CPU.")
 
-def main():
+def main(args):
     NUM_CLASSES = 19
     check_device = CheckDevice()
-    shape = (1, 3, 512, 256)
+    shape = args.size_image
     
     try:
         evaluator = PerformanceEvaluator(num_classes=NUM_CLASSES,
                                          device=check_device(),
-                                         input_shape=shape)
+                                         input_shape=shape,
+                                         args = args)
         evaluator.evaluate()
     except Exception as e:
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type = str, required = True, help="Model to evaluate, ERFNet or SegSmall")
+    parser.add_argument("--size-image", type = Tuple[int, int, int, int], required = True, help = "Size of the input image")
+    args = parser.parse_args()
+    main(args)

@@ -57,7 +57,10 @@ class cityscapes(Dataset):
     def __len__(self):
         return len(self.filenames)
     
-
+"""
+    Class used to transform images for a desired size or 
+        even flip them for increasing the variability in the dataset
+"""
 class MyCoTransform(object):
     def __init__(self, augment=True, size=(512, 256)):
         self.augment = augment

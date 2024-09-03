@@ -33,31 +33,3 @@ class iouCalc:
         
         return torch.from_numpy(iou_classes_percentage), mean_iou_percentatge
 
-class PrecisionCalc:
-    """
-        Calculate the precision score for classification.
-
-        Parameters:
-        - outputs: Model's output tensor (logits or probabilities).
-        - targets: Ground truth labels (tensor).
-
-        Returns the average precision score across the batch, between 0 an 1"""
-    def __call__(self, outputs : torch.tensor , targets : torch.tensor) -> float:
-       
-        #print(f'Batch size {targets.size(0)}')
-        #print(f'Num classes {outputs.size(1)}')
-        batch_size = targets.size(0)
-        precision_scores = []
-        for i in range(batch_size):
-            output = outputs[i]
-            target = targets[i]
-
-            _, predicted = torch.max(output, 0)
-            true_positive = ((predicted == target) & (target != 0)).float().sum()
-            predicted_positive = (predicted != 0).float().sum()
-            precision = true_positive / (predicted_positive + 1e-8)  # Adding small epsilon to avoid division by zero
-            
-            precision_scores.append(precision.item())
-
-        return sum(precision_scores) / batch_size  # Return the average precision across the batch
-

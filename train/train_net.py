@@ -13,8 +13,9 @@ sys.path.append("..")  #In order to use our classes
 
 from model.SegSmall import SegSmall
 from model.erfnet import Net
-from utils.Utils import Utils, CheckDevice, Weights
-from utils.Evaluation import iouCalc, PrecisionCalc
+from utils.Utils import CheckDevice, Weights
+from utils.Plot import Plot
+from utils.IoU import iouCalc
 from utils.Dataset import cityscapes, MyCoTransform
 
 class TrainNet():
@@ -29,12 +30,11 @@ class TrainNet():
         self.save_dir = f'./results/{self.name_training}'
         self.batch_size = args.batch_size
         self.model = args.model
-        self.scheduler = args.scheduler
         self.learning_rate = args.learning_rate
         self.is_resume_train = args.resume_train
         self.best_iou = 0
         self.time_train_sec = [] #Array to store training time by epoch
-        self.utils = Utils(args.epochs, self.name_training)
+        self.plot = Plot(args.epochs, self.name_training)
         self.utils_weights = Weights(self.device)
 
         torch.autograd.set_detect_anomaly(True)  #Detailer of error messages
@@ -57,7 +57,7 @@ class TrainNet():
         #summary(self.net, input_size=(3, 512, 512), batch_size=self.batch_size)
 
     """
-        Transform images randomly
+        Transform images randomly and create the dataset for further training and validation phase
     """
     def __transform_images_randomly(self):
         co_transform = MyCoTransform(augment=True)
@@ -161,22 +161,9 @@ class TrainNet():
         if self.is_resume_train:
             init_epoch = self.resume_training(optimizer, checkpoint_file)
 
-        if(self.scheduler == "Lambda"):
-            lambda1 = lambda epoch: pow((1 - ((epoch - 1) / self.epochs)), 0.9)
-            scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda1)
-        elif(self.scheduler == "Reduce"):
-            scheduler = lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode = 'max',          # Mode can be 'min' for minimizing loss, or 'max' for maximizing metrics like accuracy
-                factor = 0.5,          # Factor by which the learning rate will be reduced. New_lr = lr * factor
-                patience = 2,          # Number of epochs with no improvement after which learning rate will be reduced
-                verbose = True,        # Print messages when the learning rate is updated
-                min_lr = 5e-4          # Minimum learning rate
-            )
-        else:
-            raise Exception("Scheduler not found")
+        lambda1 = lambda epoch: pow((1 - ((epoch - 1) / self.epochs)), 0.9)
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda1)
 
-        path_text_file = f'results/{self.name_training}/results_{self.name_training}.txt'
         if(self.model == "SegSmall"):
             path_text_file = f'results/{self.name_training}/results_{self.name_training}_SegSmall.txt'
         elif(self.model == "erfnet"):
@@ -186,15 +173,11 @@ class TrainNet():
         
         if (not os.path.exists(path_text_file)):    #dont add first line if it exists 
             with open(path_text_file, "a") as myfile:
-                myfile.write(f'Using {self.model} model with {self.scheduler} scheduler. Batch size: {self.batch_size} and epochs: {self.epochs} \n')
-                myfile.write("Epoch\t\tTrain-loss\t\tTest-loss\t\tTrain-Precision\t\tVal-Precision\t\tTest-IoU(%)\t\tlearningRate")
+                myfile.write(f'Using {self.model} model. Batch size: {self.batch_size} and epochs: {self.epochs} \n')
+                myfile.write("Epoch\t\tTrain-loss\t\tTest-loss\t\t\Test-IoU(%)\t\tlearningRate")
 
         init_epoch = 1
         step_epochs = 1
-
-        #Arrays to store precision in training and validation
-        train_precision = []
-        val_precision = []
 
         #Array to store the amount of iou
         iou_val_list = []
@@ -206,7 +189,6 @@ class TrainNet():
         total_images_train = len(loader_train.dataset)
         total_images_val = len(loader_val.dataset)
 
-        precision_calc = PrecisionCalc()
 
         print(f"Start training using: {self.epochs} epochs, {self.batch_size} batch size, Dataset train {total_images_train} images, Dataset val {total_images_val}!!!!!")
         for epoch in range(init_epoch, self.epochs + 1, step_epochs):
@@ -222,7 +204,6 @@ class TrainNet():
             
             init_time_sec = time.time()
             epoch_loss_train = []
-            epoch_precision_train = []
             progress = 0
             for batch in loader_train:
                 inputs, targets = batch
@@ -245,16 +226,13 @@ class TrainNet():
                 optimizer.step() 
 
                 epoch_loss_train.append(loss.item())
-                epoch_precision_train.append(precision_calc(outputs, targets))
 
                 # Make sure not to exceed 100% if the last batch has fewer images
                 progress+=self.batch_size
                 self.show_percentatge("Training", progress, total_images_train)
 
             avg_train_loss = np.mean(epoch_loss_train)
-            avg_train_precision = np.mean(epoch_precision_train)
             train_loss.append(avg_train_loss)
-            train_precision.append(avg_train_precision)
 
             #Calculate time for each epoch
             time_train_epoch_sec = time.time() - init_time_sec
@@ -272,7 +250,6 @@ class TrainNet():
             progress = 0 #reset progress to show the percentage
             with torch.no_grad():
                 val_loss_epoch = []
-                val_precision_epoch = []
                 val_iou_epoch = []
                 val_mean_iou_epoch = []
                 for batch in loader_val:   
@@ -288,9 +265,6 @@ class TrainNet():
                     loss = criterion(outputs.squeeze(1), targets.squeeze(1).long())
                     val_loss_epoch.append(loss.item())
 
-                    #Compute precision
-                    val_precision_epoch.append(precision_calc(outputs, targets))
-
                     #Compute IoU
                     iou_per_class, mean_iou = iouEval.calculate_batch_iou(outputs, targets, self.num_classes)
                     val_iou_epoch.append(iou_per_class)
@@ -301,27 +275,23 @@ class TrainNet():
 
             # Calculate average metrics for the entire epoch
             avg_val_loss = np.mean(val_loss_epoch)
-            avg_val_precision = np.mean(val_precision_epoch)
             avg_val_iou = torch.stack(val_iou_epoch).mean(dim=0)
             avg_val_mean_iou = np.mean(val_mean_iou_epoch)
 
             val_loss.append(avg_val_loss)
-            val_precision.append(avg_val_precision)
             iou_val_list.append(avg_val_mean_iou)
             
             print(f"\nEpoch [{epoch}/{self.epochs}]")
             print(f"Average Epoch Training Loss: {avg_train_loss:.4f}, Average Epoch Validation Loss: {avg_val_loss:.4f}")
-            print(f"Average Training Precision: {avg_train_precision:.4f}, Average Validation Precision: {avg_val_precision:.4f}")
             print(f"Validation IoU per class: {avg_val_iou}")
             print(f"Validation Mean IoU: {avg_val_mean_iou:.4f}")
 
-            #Write results in a text file
+            #Write results to a text file
             with open(path_text_file, "a") as myfile:
-                # Write results to the file
-                myfile.write("\n%d\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f" % (
-                    epoch, avg_train_loss, avg_val_loss, avg_train_precision, avg_val_precision, avg_val_mean_iou, usedLr
-                ))
-            
+                myfile.write("\n%d\t\t|%.4f\t\t|%.4f\t\t|%.4f\t\t|%.4f" % (
+                epoch, avg_train_loss, avg_val_loss, avg_val_mean_iou, usedLr
+            ))
+                
             # Save the best weight for a checkpoint
             is_best = avg_val_mean_iou > self.best_iou
             if is_best:
@@ -330,18 +300,13 @@ class TrainNet():
             #save every epoch
             self.save_checkpoint(epoch, optimizer, avg_val_mean_iou, is_best)
 
-            if(self.scheduler == "Reduce"):
-                scheduler.step(self.best_iou) #Update learning rate according to IoU if becomes stagnant
-            else:
-                scheduler.step() #Update learning rate regardless any condition
+            scheduler.step() #Update learning rate regardless any condition
             print("###############################################")
             
         #Create the plots for evaluating the network
         print(f"Best epoch {best_epoch} with IOU: {self.best_iou:.4f} %")
-        self.utils.create_val_loss_plot(train_loss, val_loss)
-        self.utils.create_precision_plot(train_precision, val_precision)
-        self.utils.create_iou_plot(iou_val_list)
-
+        self.plot.create_val_loss_plot(train_loss, val_loss)
+        self.plot.create_iou_plot(iou_val_list)
 
 def main():
 
@@ -362,7 +327,6 @@ def main():
     parser.add_argument("--resume_train",  type = bool,  default = False,                help = "Resume training from a checkpoint")
     parser.add_argument("--train_name",    type = str,   required = True,                help = "Training name to differentiate among them")
     parser.add_argument("--model",         type = str,   required = True,                help = "Model to use")
-    parser.add_argument("--scheduler",     type = str,   required = True,                help = "Scheduler to use")
     args = parser.parse_args()
 
     check_device = CheckDevice() #Obtain the available device to use
