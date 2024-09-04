@@ -17,6 +17,8 @@ from utils.Utils import CheckDevice, Weights
 from utils.Plot import Plot
 from utils.IoU import iouCalc
 from utils.Dataset import cityscapes, MyCoTransform
+from utils.SaveModel import SaveModel
+from utils.LoadModel import LoadModel
 
 class TrainNet():
     def __init__(self, args, device : str) -> None:
@@ -27,7 +29,7 @@ class TrainNet():
         self.device = device
         self.dataset_path = args.dataset_path
         self.name_training = args.train_name
-        self.save_dir = f'./results/{self.name_training}'
+        self.save_dir = f'{os.getcwd()}/results/{self.name_training}'
         self.batch_size = args.batch_size
         self.model = args.model
         self.learning_rate = args.learning_rate
@@ -39,10 +41,12 @@ class TrainNet():
 
         torch.autograd.set_detect_anomaly(True)  #Detailer of error messages
 
-        #Create folder to save the weights, biases and checkpoint after training
+        #Create folder to save the weights, biases and checkpoint after/during training
+        print(f"{self.save_dir}")
         if not os.path.exists(self.save_dir):
             os.makedirs("train_data")
 
+        print("hello")
         self.__check_empty_directories(args.dataset_path)
         if(self.model == "SegSmall"):
             print("Using SegSmall model")
@@ -59,7 +63,7 @@ class TrainNet():
     """
         Transform images randomly and create the dataset for further training and validation phase
     """
-    def __transform_images_randomly(self):
+    def __transform_images(self):
         co_transform = MyCoTransform(augment=True)
         co_transform_val = MyCoTransform(augment=False)
         dataset_train = cityscapes(self.dataset_path, co_transform = co_transform, subset = 'train')
@@ -73,40 +77,6 @@ class TrainNet():
                 dir_path = os.path.join(root, name)
                 if not os.listdir(dir_path):  # Check if the directory is empty
                     raise Exception(f"There's one empty directory {dir_path}")
-    
-    """
-        Resume training from a checkpoint
-    """
-    def resume_training(self, optimizer, checkpoint_file : str) -> int:
-        filenameCheckpoint = self.save_dir + '/' + checkpoint_file
-        
-        #Check if the file exists, although the user wants to reignite the training
-        if not os.path.exists(filenameCheckpoint):
-            raise Exception("There's no checkpoint")
-        
-        filenameCheckpoint = self.save_dir + checkpoint_file
-        checkpoint = torch.load(filenameCheckpoint)
-        self.net.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        self.best_iou = checkpoint['best_val_iou']
-        epoch = checkpoint['epoch']
-        print("=> Loaded checkpoint at epoch {})".format(checkpoint['epoch']))
-        return epoch
-
-    """
-        Save the checkpoint
-    """
-    def save_checkpoint(self, epoch : int, optimizer, iou : float, is_best = False) -> None:
-        checkpoint = {
-            'epoch': epoch,
-            'state_dict': self.net.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'best_val_iou': iou
-        }
-        torch.save(checkpoint, os.path.join(self.save_dir, f'{self.name_training}_checkpoint.pth.tar'))
-        if is_best:
-            print(f"Saving model as best with {iou:.4f} %")
-            torch.save(self.net.state_dict(), os.path.join(self.save_dir, f'{self.name_training}_best_weights.pth'))
     
     """
         It is used to count the amount of learnable parameters in the model
@@ -146,7 +116,7 @@ class TrainNet():
         """
             Interesting: https://stackoverflow.com/questions/51433378/what-does-model-train-do-in-pytorch
         """
-        data_train, data_val = self.__transform_images_randomly()
+        data_train, data_val = self.__transform_images()
         loader_train = DataLoader(data_train, num_workers = 4, batch_size = self.batch_size, shuffle = True)
         loader_val = DataLoader(data_val, num_workers = 4, batch_size = self.batch_size, shuffle = False)
         
@@ -157,9 +127,10 @@ class TrainNet():
 
         optimizer = Adam(self.net.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4)
 
+        load_model = LoadModel(self.net)
         checkpoint_file = f'checkpoint_{self.name_training}.pth.tar'
         if self.is_resume_train:
-            init_epoch = self.resume_training(optimizer, checkpoint_file)
+            init_epoch = load_model.resume_training(optimizer, checkpoint_file, save_dir = self.save_dir)
 
         lambda1 = lambda epoch: pow((1 - ((epoch - 1) / self.epochs)), 0.9)
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda = lambda1)
@@ -188,6 +159,8 @@ class TrainNet():
         val_loss = []
         total_images_train = len(loader_train.dataset)
         total_images_val = len(loader_val.dataset)
+
+        save_model = SaveModel()
 
 
         print(f"Start training using: {self.epochs} epochs, {self.batch_size} batch size, Dataset train {total_images_train} images, Dataset val {total_images_val}!!!!!")
@@ -298,7 +271,8 @@ class TrainNet():
                 self.best_iou = avg_val_mean_iou
                 best_epoch = epoch
             #save every epoch
-            self.save_checkpoint(epoch, optimizer, avg_val_mean_iou, is_best)
+            save_model(epoch = epoch, optimizer = optimizer, iou = avg_val_mean_iou, name_training = self.name_training,
+                       save_dir = self.save_dir, model = self.net, is_best = is_best)
 
             scheduler.step() #Update learning rate regardless any condition
             print("###############################################")
@@ -319,13 +293,13 @@ def main():
 
     #Parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path",  type = str,   default = default_path_dataset, help = "Dataset to train")
-    parser.add_argument("--batch_size",    type = int,   default = 5,                    help = "Batch size") 
+    parser.add_argument("--dataset-path",  type = str,   default = default_path_dataset, help = "Dataset to train")
+    parser.add_argument("--batch-size",    type = int,   default = 5,                    help = "Batch size") 
     parser.add_argument("--epochs",        type = int,   default = 15,                   help = "Number of epochs to train")
     parser.add_argument("--num-classes",   type = int,   default = 19,                   help = "SegSmall classes. Required for loading the base network. Classes that are only evaluated in eval mode")
-    parser.add_argument("--learning_rate", type = float, default = 0.005,                help = "Learning rate for the training")
-    parser.add_argument("--resume_train",  type = bool,  default = False,                help = "Resume training from a checkpoint")
-    parser.add_argument("--train_name",    type = str,   required = True,                help = "Training name to differentiate among them")
+    parser.add_argument("--learning-rate", type = float, default = 0.005,                help = "Learning rate for the training")
+    parser.add_argument("--resume-train",  type = bool,  default = False,                help = "Resume training from a checkpoint")
+    parser.add_argument("--train-name",    type = str,   required = True,                help = "Training name to differentiate among them")
     parser.add_argument("--model",         type = str,   required = True,                help = "Model to use")
     args = parser.parse_args()
 

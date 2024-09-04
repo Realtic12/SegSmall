@@ -11,6 +11,6 @@ Parameters can be modified, passing the arguments when calling the previous pyth
 
 ## Results
 
-The results folder contains the results of the training process, with the best model weights and a checkpoint after each poch, in case you want to resume the training process for whatever reason. Furthermore, you can find a text file where you can find the performance of the model according to our chosen metrics (loss, precision, Iou). Finally, according to that metrics, plots are generated to show the performance of the model during the training process.
+The results folder contains the results of the training process, with the best model weights and a checkpoint after each poch, in case you want to resume the training process for whatever reason. Furthermore, you can find a text file where you can find the performance of the model according to our chosen metrics (loss,Iou). Finally, according to that metrics, plots are generated to show the performance of the model during the training process.
 
 
