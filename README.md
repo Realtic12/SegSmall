@@ -9,22 +9,22 @@ SegSmall is a project that aims to reduce the computation cost of semantic segme
 | 1     | Initial Block                   | 16                 | 512 x 256         | Conv, Max Pooling                       |
 | 2-6   | Downsampler Block               | 64                 | 256 x 128         | Conv, Max Pooling                       |
 | 7     | Non-bt-1d (dilation 2)          | 64                 | 256 x 128         | Depthwise separable convolutions, SE Block |
-| SE    | SE Block                        | 64                 | 256 x 128         | Squeeze-and-Excitation                  |
-| 8     | Downsampler Block               | 128                | 128 x 64          | Conv, Max Pooling                       |
-| 9     | Non-bt-1d (dilation 2)          | 128                | 128 x 64          | Depthwise separable convolutions        |
-| 10    | Non-bt-1d (dilation 4)          | 128                | 128 x 64          | Depthwise separable convolutions        |
-| 11    | Non-bt-1d (dilation 8)          | 128                | 128 x 64          | Depthwise separable convolutions        |
-| 12    | Non-bt-1d (dilation 16)         | 128                | 128 x 64          | Depthwise separable convolutions        |
-| 13    | Non-bt-1d (dilation 2)          | 128                | 128 x 64          | Depthwise separable convolutions        |
-| 14    | Non-bt-1d (dilation 4)          | 128                | 128 x 64          | Depthwise separable convolutions        |
-| 15    | Non-bt-1d (dilation 8)          | 128                | 128 x 64          | Depthwise separable convolutions        |
-| 16    | Non-bt-1d (dilation 16)         | 128                | 128 x 64          | Depthwise separable convolutions        |
-| SE2   | SE Block                        | 128                | 128 x 64          | Squeeze-and-Excitation                  |
-| 17    | Upsampler Block                 | 64                 | 256 x 128         | Resolution enhancement                  |
-| 18-19 | Non-bt-1d                       | 64                 | 256 x 128         | Depthwise separable convolutions        |
-| 20    | Upsampler Block                 | 16                 | 512 x 256         | Resolution enhancement                  |
-| 21-22 | Non-bt-1d                       | 16                 | 512 x 256         | Depthwise separable convolutions        |
-| 23    | Transposed Convolution          | Number of classes  | 1024 x 512        | Final prediction                        |
+| 8     | SE Block                        | 64                 | 256 x 128         | Squeeze-and-Excitation                  |
+| 9     | Downsampler Block               | 128                | 128 x 64          | Conv, Max Pooling                       |
+| 10    | Non-bt-1d (dilation 2)          | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 11    | Non-bt-1d (dilation 4)          | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 12    | Non-bt-1d (dilation 8)          | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 13    | Non-bt-1d (dilation 16)         | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 14    | Non-bt-1d (dilation 2)          | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 15    | Non-bt-1d (dilation 4)          | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 16    | Non-bt-1d (dilation 8)          | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 17    | Non-bt-1d (dilation 16)         | 128                | 128 x 64          | Depthwise separable convolutions        |
+| 18    | SE Block                        | 128                | 128 x 64          | Squeeze-and-Excitation                  |
+| 19    | Upsampler Block                 | 64                 | 256 x 128         | Resolution enhancement                  |
+| 20-21 | Non-bt-1d                       | 64                 | 256 x 128         | Depthwise separable convolutions        |
+| 22    | Upsampler Block                 | 16                 | 512 x 256         | Resolution enhancement                  |
+| 23-24 | Non-bt-1d                       | 16                 | 512 x 256         | Depthwise separable convolutions        |
+| 25    | Transposed Convolution          | Number of classes  | 1024 x 512        | Final prediction                        |
 
 
 ## Setup
