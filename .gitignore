@@ -1,0 +1,23 @@
+# Visual Studio Code
+.vscode/*
+
+# Dataset
+dataset/cityscapes/data*
+dataset/cityscapes/cityscapesScripts*
+
+# Results
+train/results*
+train/train_data*
+train/__pycache__/*
+
+#Utils
+utils/__pycache__/*
+
+#Model
+model/__pycache__/*
+
+# Pycache
+**/__pycache__/
+
+#Class weights
+train/class_weights.json
